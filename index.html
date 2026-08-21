@@ -89,266 +89,269 @@
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
-    <div id="lobby">
-        <h1>Wacky Chef Showdown</h1>
-        <input type="text" id="nameInput" placeholder="Enter your name" />
-        <button id="joinButton">Join Game</button>
-    </div>
-    <div id="globalLeaderboard"></div>
-    <div id="deathScreen" style="display:none;">
-        <h1>YOU DIED</h1>
-        <p id="finalScoreText"></p>
-        <p id="bestScoreText"></p>
-        <button id="respawnBtn">Respawn</button>
-        <button id="lobbyBtn">Return to Lobby</button>
-    </div>
-    <div id="countdown" style="display:none;">
-        <h1 id="countdownText"></h1>
-    </div>
-    <div id="reconnectOverlay" style="display:none;">
-        <h1>Reconnecting...</h1>
-    </div>
+<div style="position:fixed;top:0;left:0;right:0;background:#ff6b35;color:white;text-align:center;padding:6px;font-size:13px;z-index:9999;">🎮 Demo client — deploy server.js on Railway/Render for full multiplayer. <a href="https://github.com/caytec/wacky-chef-showdown" style="color:white">Get server code →</a></div>
 
-    <script>
-        let gameState = 'lobby';
-        const socket = io();
-        let playerId = null;
-        let roomId = null;
-        let playerProfile = { level: 1, xp: 0, allTimeScore: 0 };
-        let predictedX = 1500;
-        let predictedY = 1500;
-        let playerHp = 100;
-        const playerMaxHp = 100;
-        let playerScore = 0;
-        let playerXp = 0;
-        let playerLevel = 1;
-        let ping = 0;
-        let pingStart = 0;
-        let gameTimer = 600;
-        let leaderboard = [];
-        let particles = [];
-        const SPEED = 4;
-        const WORLD_W = 3000;
-        const WORLD_H = 3000;
-        const remoteEntities = new Map();
-        const serverBots = [];
-        const serverCollectibles = [];
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
+<canvas id="gameCanvas"></canvas>
+<div id="lobby">
+    <h1>Wacky Chef Showdown</h1>
+    <input type="text" id="nameInput" placeholder="Enter your name" />
+    <button id="joinButton">Join Game</button>
+</div>
+<div id="globalLeaderboard"></div>
+<div id="deathScreen" style="display:none;">
+    <h1>YOU DIED</h1>
+    <p id="finalScoreText"></p>
+    <p id="bestScoreText"></p>
+    <button id="respawnBtn">Respawn</button>
+    <button id="lobbyBtn">Return to Lobby</button>
+</div>
+<div id="countdown" style="display:none;">
+    <h1 id="countdownText"></h1>
+</div>
+<div id="reconnectOverlay" style="display:none;">
+    <h1>Reconnecting...</h1>
+</div>
+
+<script>
+    let gameState = 'lobby';
+    const SERVER_URL = window.location.hostname === 'localhost' ? 'http://localhost:3000' : '';
+    const socket = io(SERVER_URL);
+    let playerId = null;
+    let roomId = null;
+    let playerProfile = { level: 1, xp: 0, allTimeScore: 0 };
+    let predictedX = 1500;
+    let predictedY = 1500;
+    let playerHp = 100;
+    const playerMaxHp = 100;
+    let playerScore = 0;
+    let playerXp = 0;
+    let playerLevel = 1;
+    let ping = 0;
+    let pingStart = 0;
+    let gameTimer = 600;
+    let leaderboard = [];
+    let particles = [];
+    const SPEED = 4;
+    const WORLD_W = 3000;
+    const WORLD_H = 3000;
+    const remoteEntities = new Map();
+    const serverBots = [];
+    const serverCollectibles = [];
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            this.vx = (Math.random() * 6) - 3;
+            this.vy = (Math.random() * 6) - 3;
+            this.life = 60;
+            this.maxLife = 60;
+            this.size = Math.random() * 4 + 2;
+        }
+
+        spawnParticles() { /* Logic to spawn particles */ }
+
+        updateParticles() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life--;
+
+            if (this.life < 1) {
+                return false;
+            }
+            return true;
+        }
+
+        drawParticles() {
+            ctx.globalAlpha = this.life / this.maxLife;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fillStyle = this.color;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    const cam = { x: 0, y: 0 };
+
+    function updateCamera() {
+        cam.x = Math.min(WORLD_W, Math.max(0, predictedX - canvas.width / 2));
+        cam.y = Math.min(WORLD_H, Math.max(0, predictedY - canvas.height / 2));
+    }
+
+    function updateInterpolation() {
+        remoteEntities.forEach((entry) => {
+            entry.renderX += (entry.x - entry.renderX) * 0.2;
+            entry.renderY += (entry.y - entry.renderY) * 0.2;
+        });
+    }
+
+    // Socket events
+    socket.on('connect', () => {
+        socket.emit('requestLeaderboard');
+    });
+
+    socket.on('roomJoined', ({ playerId: id, roomId: room }) => {
+        playerId = id;
+        roomId = room;
+        hideLobby();
+        startCountdown();
+    });
+
+    socket.on('gameState', (data) => {
+        gameTimer = data.timer;
+        data.players.forEach(player => {
+            remoteEntities.set(player.id, player);
+        });
+    });
+
+    socket.on('playerDied', ({ playerId }) => {
+        if (playerId === playerId) {
+            spawnParticles(predictedX, predictedY, 'red');
+            document.getElementById('finalScoreText').innerText = `Score: ${playerScore}`;
+            document.getElementById('bestScoreText').innerText = `Best Score: ${playerProfile.allTimeScore}`;
+            document.getElementById('deathScreen').style.display = 'flex';
+        }
+    });
+
+    socket.on('disconnect', () => {
+        document.getElementById('reconnectOverlay').style.display = 'flex';
+    });
+
+    socket.on('reconnect', () => {
+        document.getElementById('reconnectOverlay').style.display = 'none';
+    });
+
+    function hideLobby() {
+        document.getElementById('lobby').style.display = 'none';
+    }
+
+    function startCountdown() {
+        gameState = 'countdown';
+        document.getElementById('countdown').style.display = 'flex';
+        let countdownStep = 3;
+        const countdownInterval = setInterval(() => {
+            if (countdownStep <= 0) {
+                clearInterval(countdownInterval);
+                document.getElementById('countdown').style.display = 'none';
+                gameState = 'playing';
+            } else {
+                document.getElementById('countdownText').innerText = countdownStep;
+                countdownStep--;
+            }
+        }, 1000);
+    }
+
+    function spawnParticles(x, y, color) {
+        particles.push(new Particle(x, y, color));
+    }
+
+    function updatePrediction() {
+        if (gameState === 'playing') {
+            let dx = 0, dy = 0;
+            // Movement handling
+            if (keys.W || keys.ArrowUp) dy = -1;
+            if (keys.S || keys.ArrowDown) dy = 1;
+            if (keys.A || keys.ArrowLeft) dx = -1;
+            if (keys.D || keys.ArrowRight) dx = 1;
+
+            // Normalize
+            const length = Math.sqrt(dx * dx + dy * dy);
+            if (length > 0) {
+                dx /= length;
+                dy /= length;
+            }
+
+            predictedX = Math.min(WORLD_W, Math.max(0, predictedX + dx * SPEED));
+            predictedY = Math.min(WORLD_H, Math.max(0, predictedY + dy * SPEED));
+
+            if (dx !== 0 || dy !== 0) {
+                socket.emit('playerInput', { dx, dy });
+            }
+        }
+    }
+
+    function drawWorld() {
+        ctx.save();
+        ctx.translate(-cam.x, -cam.y);
+
+        // Fog of war
+        const gradient = ctx.createRadialGradient(predictedX, predictedY, 0, predictedX, predictedY, 500);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+        // Draw entities
+        remoteEntities.forEach((player) => {
+            ctx.beginPath();
+            ctx.arc(player.renderX, player.renderY, 10, 0, 2 * Math.PI);
+            ctx.fillStyle = 'cornflowerblue';
+            ctx.fill();
+        });
+
+        ctx.restore();
+    }
+
+    function drawHUD() {
+        ctx.fillStyle = 'green';
+        ctx.fillRect(20, 20, (playerHp / playerMaxHp) * 200, 16);
+        ctx.fillRect(20, 44, (playerXp / 100) * 200, 16); // xp max assumed as 100 for display
+        ctx.fillStyle = 'white';
+        ctx.fillText(`Level: ${playerLevel}`, 20, 62);
+        ctx.fillText(`Score: ${playerScore}`, 20, 80);
+        ctx.fillText(`Ping: ${ping}`, canvas.width - 100, 20);
+        ctx.fillText(`Timer: ${Math.floor(gameTimer / 20 / 60)}:${Math.floor((gameTimer / 20) % 60).toString().padStart(2, '0')}`, canvas.width / 2 - 40, 20);
+    }
+
+    function gameLoop() {
+        requestAnimationFrame(gameLoop);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (gameState === 'playing') {
+            updateCamera();
+            updatePrediction();
+            updateInterpolation();
+            drawWorld();
+            drawHUD();
+        }
+    }
+
+    window.addEventListener('resize', () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
+    });
 
-        class Particle {
-            constructor(x, y, color) {
-                this.x = x;
-                this.y = y;
-                this.color = color;
-                this.vx = (Math.random() * 6) - 3;
-                this.vy = (Math.random() * 6) - 3;
-                this.life = 60;
-                this.maxLife = 60;
-                this.size = Math.random() * 4 + 2;
-            }
+    document.getElementById('joinButton').onclick = () => {
+        const username = document.getElementById('nameInput').value;
+        socket.emit('joinRoom', { playerId: username, roomId: 'default' });
+    };
 
-            spawnParticles() { /* Logic to spawn particles */ }
+    document.getElementById('respawnBtn').onclick = () => {
+        socket.emit('respawn');
+        document.getElementById('deathScreen').style.display = 'none';
+        gameState = 'playing';
+    };
 
-            updateParticles() {
-                this.x += this.vx;
-                this.y += this.vy;
-                this.life--;
+    document.getElementById('lobbyBtn').onclick = () => {
+        document.getElementById('deathScreen').style.display = 'none';
+        document.getElementById('lobby').style.display = 'flex';
+        gameState = 'lobby';
+    };
 
-                if (this.life < 1) {
-                    return false;
-                }
-                return true;
-            }
+    const keys = {};
+    window.addEventListener('keydown', (event) => {
+        keys[event.key] = true;
+    });
+    window.addEventListener('keyup', (event) => {
+        keys[event.key] = false;
+    });
 
-            drawParticles() {
-                ctx.globalAlpha = this.life / this.maxLife;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
-                ctx.globalAlpha = 1;
-            }
-        }
-
-        const cam = { x: 0, y: 0 };
-
-        function updateCamera() {
-            cam.x = Math.min(WORLD_W, Math.max(0, predictedX - canvas.width / 2));
-            cam.y = Math.min(WORLD_H, Math.max(0, predictedY - canvas.height / 2));
-        }
-
-        function updateInterpolation() {
-            remoteEntities.forEach((entry) => {
-                entry.renderX += (entry.x - entry.renderX) * 0.2;
-                entry.renderY += (entry.y - entry.renderY) * 0.2;
-            });
-        }
-
-        // Socket events
-        socket.on('connect', () => {
-            socket.emit('requestLeaderboard');
-        });
-
-        socket.on('roomJoined', ({ playerId: id, roomId: room }) => {
-            playerId = id;
-            roomId = room;
-            hideLobby();
-            startCountdown();
-        });
-
-        socket.on('gameState', (data) => {
-            gameTimer = data.timer;
-            data.players.forEach(player => {
-                remoteEntities.set(player.id, player);
-            });
-        });
-
-        socket.on('playerDied', ({ playerId }) => {
-            if (playerId === playerId) {
-                spawnParticles(predictedX, predictedY, 'red');
-                document.getElementById('finalScoreText').innerText = `Score: ${playerScore}`;
-                document.getElementById('bestScoreText').innerText = `Best Score: ${playerProfile.allTimeScore}`;
-                document.getElementById('deathScreen').style.display = 'flex';
-            }
-        });
-
-        socket.on('disconnect', () => {
-            document.getElementById('reconnectOverlay').style.display = 'flex';
-        });
-
-        socket.on('reconnect', () => {
-            document.getElementById('reconnectOverlay').style.display = 'none';
-        });
-
-        function hideLobby() {
-            document.getElementById('lobby').style.display = 'none';
-        }
-
-        function startCountdown() {
-            gameState = 'countdown';
-            document.getElementById('countdown').style.display = 'flex';
-            let countdownStep = 3;
-            const countdownInterval = setInterval(() => {
-                if (countdownStep <= 0) {
-                    clearInterval(countdownInterval);
-                    document.getElementById('countdown').style.display = 'none';
-                    gameState = 'playing';
-                } else {
-                    document.getElementById('countdownText').innerText = countdownStep;
-                    countdownStep--;
-                }
-            }, 1000);
-        }
-
-        function spawnParticles(x, y, color) {
-            particles.push(new Particle(x, y, color));
-        }
-
-        function updatePrediction() {
-            if (gameState === 'playing') {
-                let dx = 0, dy = 0;
-                // Movement handling
-                if (keys.W || keys.ArrowUp) dy = -1;
-                if (keys.S || keys.ArrowDown) dy = 1;
-                if (keys.A || keys.ArrowLeft) dx = -1;
-                if (keys.D || keys.ArrowRight) dx = 1;
-
-                // Normalize
-                const length = Math.sqrt(dx * dx + dy * dy);
-                if (length > 0) {
-                    dx /= length;
-                    dy /= length;
-                }
-
-                predictedX = Math.min(WORLD_W, Math.max(0, predictedX + dx * SPEED));
-                predictedY = Math.min(WORLD_H, Math.max(0, predictedY + dy * SPEED));
-
-                if (dx !== 0 || dy !== 0) {
-                    socket.emit('playerInput', { dx, dy });
-                }
-            }
-        }
-
-        function drawWorld() {
-            ctx.save();
-            ctx.translate(-cam.x, -cam.y);
-
-            // Fog of war
-            const gradient = ctx.createRadialGradient(predictedX, predictedY, 0, predictedX, predictedY, 500);
-            gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-
-            // Draw entities
-            remoteEntities.forEach((player) => {
-                ctx.beginPath();
-                ctx.arc(player.renderX, player.renderY, 10, 0, 2 * Math.PI);
-                ctx.fillStyle = 'cornflowerblue';
-                ctx.fill();
-            });
-
-            ctx.restore();
-        }
-
-        function drawHUD() {
-            ctx.fillStyle = 'green';
-            ctx.fillRect(20, 20, (playerHp / playerMaxHp) * 200, 16);
-            ctx.fillRect(20, 44, (playerXp / 100) * 200, 16); // xp max assumed as 100 for display
-            ctx.fillStyle = 'white';
-            ctx.fillText(`Level: ${playerLevel}`, 20, 62);
-            ctx.fillText(`Score: ${playerScore}`, 20, 80);
-            ctx.fillText(`Ping: ${ping}`, canvas.width - 100, 20);
-            ctx.fillText(`Timer: ${Math.floor(gameTimer / 20 / 60)}:${Math.floor((gameTimer / 20) % 60).toString().padStart(2, '0')}`, canvas.width / 2 - 40, 20);
-        }
-
-        function gameLoop() {
-            requestAnimationFrame(gameLoop);
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            if (gameState === 'playing') {
-                updateCamera();
-                updatePrediction();
-                updateInterpolation();
-                drawWorld();
-                drawHUD();
-            }
-        }
-
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        });
-
-        document.getElementById('joinButton').onclick = () => {
-            const username = document.getElementById('nameInput').value;
-            socket.emit('joinRoom', { playerId: username, roomId: 'default' });
-        };
-
-        document.getElementById('respawnBtn').onclick = () => {
-            socket.emit('respawn');
-            document.getElementById('deathScreen').style.display = 'none';
-            gameState = 'playing';
-        };
-
-        document.getElementById('lobbyBtn').onclick = () => {
-            document.getElementById('deathScreen').style.display = 'none';
-            document.getElementById('lobby').style.display = 'flex';
-            gameState = 'lobby';
-        };
-
-        const keys = {};
-        window.addEventListener('keydown', (event) => {
-            keys[event.key] = true;
-        });
-        window.addEventListener('keyup', (event) => {
-            keys[event.key] = false;
-        });
-
-        gameLoop(); // Start the game loop
-    </script>
+    gameLoop(); // Start the game loop
+</script>
 </body>
 </html>
